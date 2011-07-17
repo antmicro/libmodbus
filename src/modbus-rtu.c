@@ -259,7 +259,7 @@ static int win32_ser_read(struct win32_ser *ws, uint8_t *p_msg,
 
 void _modbus_rtu_set_rts(int fd, int on)
 {
-#if defined(HAVE_DECL_TIOCM_RTS)
+#if HAVE_DECL_TIOCM_RTS
     int flags;
 
     ioctl(fd, TIOCMGET, &flags);
@@ -792,7 +792,7 @@ int modbus_rtu_get_serial_mode(modbus_t *ctx) {
 
 int modbus_rtu_set_rts(modbus_t *ctx, int mode)
 {
-#if defined(HAVE_DECL_TIOCM_RTS)
+#if HAVE_DECL_TIOCM_RTS
     if (ctx->backend->backend_type == _MODBUS_BACKEND_TYPE_RTU) {
         modbus_rtu_t *ctx_rtu = ctx->backend_data;
 
