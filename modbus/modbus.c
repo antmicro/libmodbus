@@ -1,6 +1,9 @@
 /*
  * Copyright © 2001-2008 Stéphane Raimbault <stephane.raimbault@gmail.com>
  *
+ * Callback support:
+ * Copyright (c) 2011 Piotr Skrzypek, Ant Micro <pskrzypek@antmicro.com>
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser Public License as published by
  * the Free Software Foundation; either version 3 of the License, or
@@ -583,7 +586,7 @@ static int receive_msg(modbus_param_t *mb_param,
                 printf("\n");
 
         if (mb_param->type_com == RTU) {
-                return check_crc16(mb_param, msg, (*p_msg_length));
+                check_crc16(mb_param, msg, (*p_msg_length));
         }
         
         /* OK */
@@ -716,7 +719,7 @@ static int modbus_receive(modbus_param_t *mb_param,
 }
 
 static int response_io_status(int address, int nb,
-                              uint8_t *tab_io_status,
+                              uint8_t (*tab_io_status)(void *, uint16_t), void *arg, 
                               uint8_t *response, int offset)
 {
         int shift = 0;
@@ -724,7 +727,7 @@ static int response_io_status(int address, int nb,
         int i;
 
         for (i = address; i < address+nb; i++) {
-                byte |= tab_io_status[i] << shift;
+                byte |= tab_io_status(arg, i) << shift;
                 if (shift == 7) {
                         /* Byte is full */
                         response[offset++] = byte;
@@ -793,7 +796,7 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                         resp_length = build_response_basis(mb_param, &sft, response);
                         response[resp_length++] = (nb / 8) + ((nb % 8) ? 1 : 0);
                         resp_length = response_io_status(address, nb,
-                                                         mb_mapping->tab_coil_status,
+                                                         mb_mapping->get_coil_status, mb_mapping->data, 
                                                          response, resp_length);
                 }
         }
@@ -812,7 +815,7 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                         resp_length = build_response_basis(mb_param, &sft, response);
                         response[resp_length++] = (nb / 8) + ((nb % 8) ? 1 : 0);
                         resp_length = response_io_status(address, nb,
-                                                         mb_mapping->tab_input_status,
+                                                         mb_mapping->get_input_status, mb_mapping->data,
                                                          response, resp_length);
                 }
         }
@@ -831,8 +834,8 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                         resp_length = build_response_basis(mb_param, &sft, response);
                         response[resp_length++] = nb << 1;
                         for (i = address; i < address + nb; i++) {
-                                response[resp_length++] = mb_mapping->tab_holding_registers[i] >> 8;
-                                response[resp_length++] = mb_mapping->tab_holding_registers[i] & 0xFF;
+                                response[resp_length++] = mb_mapping->get_holding_register(mb_mapping->data,i) >> 8;
+                                response[resp_length++] = mb_mapping->get_holding_register(mb_mapping->data,i) & 0xFF;
                         }
                 }
         }
@@ -853,8 +856,8 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                         resp_length = build_response_basis(mb_param, &sft, response);
                         response[resp_length++] = nb << 1;
                         for (i = address; i < address + nb; i++) {
-                                response[resp_length++] = mb_mapping->tab_input_registers[i] >> 8;
-                                response[resp_length++] = mb_mapping->tab_input_registers[i] & 0xFF;
+                                response[resp_length++] = mb_mapping->get_input_register(mb_mapping->data,i) >> 8;
+                                response[resp_length++] = mb_mapping->get_input_register(mb_mapping->data,i) & 0xFF;
                         }
                 }
         }
@@ -868,7 +871,7 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                         int data = (query[offset+4] << 8) + query[offset+5];
                         
                         if (data == 0xFF00 || data == 0x0) {
-                                mb_mapping->tab_coil_status[address] = (data) ? ON : OFF;
+                                mb_mapping->set_coil_status(mb_mapping->data, address, (data) ? ON : OFF);
 
                                 /* In RTU mode, the CRC is computed and added
                                    to the query by modbus_send, the computed
@@ -892,7 +895,7 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                 } else {
                         int data = (query[offset+4] << 8) + query[offset+5];
                         
-                        mb_mapping->tab_holding_registers[address] = data;
+			mb_mapping->set_holding_register(mb_mapping->data, address, data);
                         memcpy(response, query, query_length);
                         resp_length = query_length;
                 }
@@ -907,7 +910,7 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                                                          ILLEGAL_DATA_ADDRESS, response);
                 } else {
                         /* 6 = byte count, 7 = first byte of data */
-                        set_bits_from_bytes(mb_mapping->tab_coil_status, address, nb, &query[offset + 7]);
+                        set_bits_from_bytes(mb_mapping->set_coil_status, mb_mapping->data, address, nb, &query[offset + 7]);
 
                         resp_length = build_response_basis(mb_param, &sft, response);
                         /* 4 to copy the coil address (2) and the quantity of coils */
@@ -928,8 +931,8 @@ void modbus_manage_query(modbus_param_t *mb_param, const uint8_t *query,
                         int i, j;
                         for (i = address, j = 0; i < address + nb; i++, j += 2) {
                                 /* 6 = byte count, 7 and 8 = first value */
-                                mb_mapping->tab_holding_registers[i] = 
-                                        (query[offset + 7 + j] << 8) + query[offset + 8 + j];
+                                mb_mapping->set_holding_register(mb_mapping->data, i, 
+                                        (query[offset + 7 + j] << 8) + query[offset + 8 + j]);
                         }
                         
                         resp_length = build_response_basis(mb_param, &sft, response);
@@ -1727,7 +1730,7 @@ int modbus_mapping_new(modbus_mapping_t *mb_mapping,
                        int nb_coil_status, int nb_input_status,
                        int nb_holding_registers, int nb_input_registers)
 {
-        /* 0X */
+        /* 0X *//*
         mb_mapping->nb_coil_status = nb_coil_status;
         mb_mapping->tab_coil_status =
                 (uint8_t *) malloc(nb_coil_status * sizeof(uint8_t));
@@ -1735,8 +1738,8 @@ int modbus_mapping_new(modbus_mapping_t *mb_mapping,
                nb_coil_status * sizeof(uint8_t));
         if (mb_mapping->tab_coil_status == NULL)
                 return FALSE;
-        
-        /* 1X */
+        */
+        /* 1X *//*
         mb_mapping->nb_input_status = nb_input_status;
         mb_mapping->tab_input_status =
                 (uint8_t *) malloc(nb_input_status * sizeof(uint8_t));
@@ -1746,8 +1749,8 @@ int modbus_mapping_new(modbus_mapping_t *mb_mapping,
                 free(mb_mapping->tab_coil_status);
                 return FALSE;
         }
-
-        /* 4X */
+	*/
+        /* 4X *//*
         mb_mapping->nb_holding_registers = nb_holding_registers;
         mb_mapping->tab_holding_registers =
                 (uint16_t *) malloc(nb_holding_registers * sizeof(uint16_t));
@@ -1758,8 +1761,8 @@ int modbus_mapping_new(modbus_mapping_t *mb_mapping,
                 free(mb_mapping->tab_input_status);
                 return FALSE;
         }
-
-        /* 3X */
+	*/
+        /* 3X *//*
         mb_mapping->nb_input_registers = nb_input_registers;
         mb_mapping->tab_input_registers =
                 (uint16_t *) malloc(nb_input_registers * sizeof(uint16_t));
@@ -1771,17 +1774,19 @@ int modbus_mapping_new(modbus_mapping_t *mb_mapping,
                 free(mb_mapping->tab_holding_registers);
                 return FALSE;
         }
-
+	*/
         return TRUE;
 }
 
 /* Frees the 4 arrays */
 void modbus_mapping_free(modbus_mapping_t *mb_mapping)
 {
+	/*
         free(mb_mapping->tab_coil_status);
         free(mb_mapping->tab_input_status);
         free(mb_mapping->tab_holding_registers);
         free(mb_mapping->tab_input_registers);
+	*/
 }
 
 /* Listens for any query from a modbus master in TCP */
@@ -1855,14 +1860,14 @@ void set_bits_from_byte(uint8_t *dest, int address, const uint8_t value)
 
 /* Sets many input/coil status from a table of bytes (only the bits
    between address and address + nb_bits are setted) */
-void set_bits_from_bytes(uint8_t *dest, int address, int nb_bits,
+void set_bits_from_bytes(void (*dest)(void *, uint16_t, uint8_t), void *arg, int address, int nb_bits,
                          const uint8_t tab_byte[])
 {
         int i;
         int shift = 0;
 
         for (i = address; i < address + nb_bits; i++) {
-                dest[i] = tab_byte[(i - address) / 8] & (1 << shift) ? ON : OFF;
+                dest(arg, i, tab_byte[(i - address) / 8] & (1 << shift) ? ON : OFF);
                 /* gcc doesn't like: shift = (++shift) % 8; */
                 shift++;
                 shift %= 8;

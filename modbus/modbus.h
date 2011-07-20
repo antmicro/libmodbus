@@ -1,6 +1,10 @@
 /*
  * Copyright © 2001-2008 Stéphane Raimbault <stephane.raimbault@gmail.com>
  *
+ * Callback support:
+ * Copyright (c) 2011 Piotr Skrzypek, Ant Micro <pskrzypek@antmicro.com>
+ *
+ *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser Public License as published by
  * the Free Software Foundation; either version 3 of the License, or
@@ -164,14 +168,21 @@ typedef struct {
 } modbus_param_t;
 
 typedef struct {
+	void *data;
         int nb_coil_status;
         int nb_input_status;
         int nb_input_registers;
         int nb_holding_registers;
-        uint8_t *tab_coil_status;
-        uint8_t *tab_input_status;
-        uint16_t *tab_input_registers;
-        uint16_t *tab_holding_registers;
+        //uint8_t *tab_coil_status;
+	uint8_t (*get_coil_status)(void *, uint16_t);
+	void (*set_coil_status)(void *, uint16_t, uint8_t);
+        //uint8_t *tab_input_status;
+	uint8_t (*get_input_status)(void *, uint16_t);
+        //uint16_t *tab_input_registers;
+	uint16_t (*get_input_register)(void *, uint16_t);
+        //uint16_t *tab_holding_registers;
+	uint16_t (*get_holding_register)(void *, uint16_t);
+	void (*set_holding_register)(void *, uint16_t, uint16_t);
 } modbus_mapping_t;
 
 
@@ -306,7 +317,7 @@ void set_bits_from_byte(uint8_t *dest, int address, const uint8_t value);
 
 /* Sets many input/coil status from a table of bytes (only the bits
    between address and address + nb_bits are setted) */
-void set_bits_from_bytes(uint8_t *dest, int address, int nb_bits,
+void set_bits_from_bytes(void (*dest)(void *, uint16_t, uint8_t), void *arg, int address, int nb_bits,
                          const uint8_t *tab_byte);
 
 /* Gets the byte value from many input/coil status.
